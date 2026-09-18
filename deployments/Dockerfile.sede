@@ -1,0 +1,17 @@
+# Máquina "sede_mexico": Debian con servidor SSH accesible.
+# Construir: docker build -t sede-linux -f deployments/Dockerfile.sede deployments
+# Ejecutar: docker run -d --name sede_mexico -p 2201:22 sede-linux
+# Conectar: ssh sede@localhost -p 2201
+
+FROM debian:12-slim
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends openssh-server \
+ && rm -rf /var/lib/apt/lists/* \
+ && useradd -m -s /bin/bash sede \
+ && echo 'sede:sede123' | chpasswd \
+ && mkdir -p /run/sshd \
+ && ssh-keygen -A
+
+EXPOSE 22
+CMD ["/usr/sbin/sshd", "-D", "-e"]
