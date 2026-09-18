@@ -1,17 +1,72 @@
-# Máquina "sede_mexico": Debian con servidor SSH accesible.
+# Máquina "sede_mexico": Debian con SSH, Go y Git.
+# Solo prepara el entorno. Dentro se entra por SSH, se clona el repositorio
+# y se compila el binario a mano.
+#
 # Construir: docker build -t sede-linux -f deployments/Dockerfile.sede deployments
-# Ejecutar: docker run -d --name sede_mexico -p 2201:22 sede-linux
-# Conectar: ssh sede@localhost -p 2201
+# Ejecutar:  docker run -d --name sede_mexico -p 2201:22 sede-linux
+# Conectar:  ssh sede@localhost -p 2201        (contraseña: sede123)
 
 FROM debian:12-slim
 
+ARG GO_VERSION=1.26.1
+
+
+# ---------------------------------------------------------------------------
+# 1. Utilidades base
+#    ca-certificates para HTTPS, curl para descargar Go, unzip para los paquetes.
+# ---------------------------------------------------------------------------
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      ca-certificates curl unzip \
+ && rm -rf /var/lib/apt/lists/*
+
+
+# ---------------------------------------------------------------------------
+# 2. Servidor SSH
+#    ssh-keygen -A genera las claves de identidad del servidor.
+# ---------------------------------------------------------------------------
 RUN apt-get update \
  && apt-get install -y --no-install-recommends openssh-server \
  && rm -rf /var/lib/apt/lists/* \
- && useradd -m -s /bin/bash sede \
- && echo 'sede:sede123' | chpasswd \
  && mkdir -p /run/sshd \
  && ssh-keygen -A
+
+
+# ---------------------------------------------------------------------------
+# 3. Git
+#    Para clonar el repositorio del proyecto desde dentro del contenedor.
+# ---------------------------------------------------------------------------
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git \
+ && rm -rf /var/lib/apt/lists/*
+
+
+# ---------------------------------------------------------------------------
+# 4. Go
+#    Se instala en /usr/local/go, la ruta oficial en Linux, y se añade
+#    /usr/local/go/bin al PATH del sistema. La versión de Debian es demasiado
+#    antigua para compilar este proyecto, por eso se toma la oficial.
+# ---------------------------------------------------------------------------
+RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -o /tmp/go.tar.gz \
+ && tar -C /usr/local -xzf /tmp/go.tar.gz \
+ && rm /tmp/go.tar.gz
+
+# PATH para procesos no interactivos (docker exec).
+ENV PATH="/usr/local/go/bin:${PATH}"
+
+# PATH para sesiones de login (entrar por SSH), que lo reconstruyen desde cero.
+# $HOME/go/bin es la ruta por defecto de "go install".
+RUN printf '%s\n' 'export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin' \
+      > /etc/profile.d/go.sh \
+ && chmod 644 /etc/profile.d/go.sh
+
+
+# ---------------------------------------------------------------------------
+# 5. Usuario de la sede
+# ---------------------------------------------------------------------------
+RUN useradd -m -s /bin/bash sede \
+ && echo 'sede:sede123' | chpasswd
+
 
 EXPOSE 22
 CMD ["/usr/sbin/sshd", "-D", "-e"]

@@ -88,8 +88,6 @@ func enviar(args []string) int {
 	}
 	logx.Info("Carpeta destino %s", carpeta)
 
-	enviarPrograma(cliente, c.Programa, carpeta)
-
 	enviados := 0
 	for _, a := range archivos {
 		if procesar(cliente, c, a, carpeta) {
@@ -98,27 +96,6 @@ func enviar(args []string) int {
 	}
 
 	return logx.Resumen(enviados, "enviados")
-}
-
-// enviarPrograma deja en la sede destino el binario con el que se restauran
-// los paquetes, sobrescribiendo el de envíos anteriores. Si no se encuentra,
-// solo se avisa: el envío de los archivos continúa igual.
-func enviarPrograma(cliente *envio.Cliente, ruta, carpeta string) {
-	if ruta == "" {
-		return
-	}
-	if _, err := os.Stat(ruta); err != nil {
-		logx.Alerta("No existe el binario Linux %s; los archivos se envían igual", ruta)
-		logx.Alerta("Para generarlo:  $env:GOOS=\"linux\"; $env:GOARCH=\"amd64\"; go build -o bin/sftnode ./cmd/sftnode; $env:GOOS=\"\"; $env:GOARCH=\"\"")
-		return
-	}
-
-	destino, err := cliente.EnviarPrograma(ruta, carpeta)
-	if err != nil {
-		logx.Alerta("No se pudo enviar el programa (%v); los archivos sí se envían", err)
-		return
-	}
-	logx.OK("Programa de restauración copiado en %s", destino)
 }
 
 // procesar aplica el pipeline a un archivo. Devuelve true si llegó bien.
@@ -266,9 +243,6 @@ Ejemplos:
 Opciones de send:
   --file               archivo a enviar; se puede repetir o usar comodines
   --dest               carpeta remota donde guardar los paquetes
-  --programa           binario Linux que viaja con el paquete (por defecto,
-                       el archivo sftnode que esté junto a sftnode.exe)
-  --sin-programa       no enviar el binario a la sede destino
   --key-file           clave privada SSH          (~/.ssh/id_ed25519)
   --known-hosts        host keys conocidas        (~/.ssh/known_hosts)
   --dry-run            valida sin cifrar ni enviar

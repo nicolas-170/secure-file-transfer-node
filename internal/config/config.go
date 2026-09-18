@@ -22,7 +22,6 @@ type Config struct {
 	Archivos []string // archivos a enviar, con los comodines ya expandidos
 	Destino  string   // carpeta remota donde guardarlos ("" = usar las por defecto)
 
-	Programa   string // binario Linux que se envía junto al paquete ("" = no enviarlo)
 	KeyFile    string // clave privada SSH
 	Password   string // contraseña SSH (variable de entorno)
 	Passphrase string // clave del cifrado AES (variable de entorno)
@@ -47,15 +46,12 @@ func Parse(args []string) (Config, error) {
 	c := Config{Puerto: 22}
 
 	var servidor, destino string
-	var sinPrograma bool
 	var patrones Lista
 
 	fs := flag.NewFlagSet("send", flag.ContinueOnError)
 	fs.StringVar(&servidor, "url", "", "servidor sftp://usuario@host:puerto[/carpeta] (obligatorio)")
 	fs.Var(&patrones, "file", "archivo o comodín a enviar (se puede repetir)")
 	fs.StringVar(&destino, "dest", "", "carpeta remota donde guardar; si no existe se usa la del sistema")
-	fs.StringVar(&c.Programa, "programa", programaPorDefecto(), "binario Linux a enviar junto al paquete")
-	fs.BoolVar(&sinPrograma, "sin-programa", false, "no enviar el binario a la sede destino")
 	fs.StringVar(&c.KeyFile, "key-file", filepath.Join(home, ".ssh", "id_ed25519"), "clave privada SSH")
 	fs.StringVar(&c.KnownHosts, "known-hosts", filepath.Join(home, ".ssh", "known_hosts"), "host keys conocidas")
 	fs.BoolVar(&c.DryRun, "dry-run", false, "valida sin cifrar ni conectarse")
@@ -65,10 +61,6 @@ func Parse(args []string) (Config, error) {
 
 	if err := fs.Parse(args); err != nil {
 		return c, err
-	}
-
-	if sinPrograma {
-		c.Programa = ""
 	}
 
 	// Los secretos se leen del entorno: en la línea de comandos serían
@@ -163,16 +155,6 @@ func (c Config) CarpetasPorDefecto() []string {
 		"/tmp/sftnode",                       // Linux, siempre escribible
 		"C:/Users/" + c.Usuario + "/sftnode", // Windows
 	}
-}
-
-// programaPorDefecto busca el binario Linux junto al ejecutable actual.
-// Al compilar con "go build -o bin/sftnode" queda al lado de sftnode.exe.
-func programaPorDefecto() string {
-	exe, err := os.Executable()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(filepath.Dir(exe), "sftnode")
 }
 
 // Servidor devuelve "host:puerto", el formato que espera el cliente SSH.

@@ -4,58 +4,135 @@ Transferencia segura de archivos entre las sedes de INNOVATECH SOLUTIONS S.A.S.
 Escrito en Go, sobre SSH/SFTP, para infraestructura on-premise Linux.
 
 Se indican los archivos a enviar y la carpeta donde guardarlos. Cada archivo se
-codifica, cifra, verifica, comprime y se transmite por un canal SSH. Junto al
-paquete viaja el propio programa, de modo que la sede destino siempre puede
-restaurarlo.
+codifica, cifra, verifica, comprime y se transmite por un canal SSH. La sede
+destino compila el mismo programa para restaurarlos.
 
 ---
 
-## Puesta en marcha
+# Guía paso a paso
 
-Todos los comandos se ejecutan en **PowerShell**, desde la raíz del proyecto.
+Hay dos máquinas y conviene tener claro en cuál se está en cada momento:
+
+| Máquina | Papel | Terminal |
+|---|---|---|
+| **Windows** | sede principal de Bogotá, envía | PowerShell |
+| **Contenedor Linux** | sede de destino, recibe y restaura | bash, entrando por SSH |
+
+El recorrido completo es: preparar la sede → preparar el cliente → enviar →
+comprobar → restaurar. Cada paso indica dónde se escribe.
+
+---
+
+## Paso 1 · Levantar la sede
+
+> En **Windows**, PowerShell, desde la raíz del proyecto.
 
 ```powershell
 cd C:\Users\Nicolas\Documents\git\secure-file-transfer-node
-```
 
-### 1. Compilar
-
-```powershell
-.\scripts\build.ps1
-```
-
-Genera los dos binarios que hacen falta:
-
-| Archivo | Para qué |
-|---|---|
-| `bin\sftnode.exe` | cliente que se ejecuta en Windows |
-| `bin\sftnode` | binario Linux que viaja a la sede para restaurar |
-
-Si falta el segundo, el envío avisa en amarillo y continúa, pero la sede se
-queda sin el programa para recuperar los archivos.
-
-### 2. Levantar la sede de prueba
-
-```powershell
 docker build -t sede-linux -f deployments/Dockerfile.sede deployments
 docker run -d --name sede_mexico -p 2201:22 sede-linux
 ```
 
-Si ya existe y solo está detenida:
+La imagen es un Debian con servidor SSH, Go y Git ya instalados. Si el
+contenedor ya existe y solo está detenido:
 
 ```powershell
 docker start sede_mexico
 ```
 
-Para entrar a mirar (contraseña `sede123`):
+Comprobar que responde:
+
+```powershell
+docker ps --filter name=sede_mexico
+```
+
+---
+
+## Paso 2 · Entrar a la sede
+
+> En **Windows**, PowerShell.
 
 ```powershell
 ssh sede@localhost -p 2201
 ```
 
-### 3. Definir las claves
+Contraseña: `sede123`. La primera vez pide aceptar el fingerprint del servidor;
+escriba `yes`.
 
-Se pierden al cerrar la terminal, así que hay que repetirlas en cada sesión.
+**A partir de aquí y hasta el paso 5, todo se escribe dentro de la sede.**
+
+---
+
+## Paso 3 · Preparar la sede
+
+> Dentro de la **sede**, en bash.
+
+### 3.1 Definir la clave de cifrado
+
+```bash
+export SFT_PASSPHRASE="ClaveDeCifrado2026"
+```
+
+Eso vale para la sesión actual. Para que quede fija en cada login:
+
+```bash
+echo 'export SFT_PASSPHRASE="ClaveDeCifrado2026"' >> ~/.bashrc
+source ~/.bashrc
+echo $SFT_PASSPHRASE
+```
+
+Apunte esa clave: **en el paso 4 hay que usar exactamente la misma en Windows**.
+Si difiere, la sede no podrá descifrar lo que reciba.
+
+### 3.2 Descargar el repositorio
+
+`git clone` crea la carpeta con el nombre del repositorio:
+
+```bash
+cd ~
+git clone https://github.com/<usuario>/secure-file-transfer-node.git
+cd secure-file-transfer-node
+```
+
+Si el repositorio aún no está publicado, se copia el código desde Windows, en
+**otra** terminal de PowerShell, sin cerrar la sesión SSH:
+
+```powershell
+docker exec -u sede sede_mexico mkdir -p /home/sede/secure-file-transfer-node
+docker cp cmd      sede_mexico:/home/sede/secure-file-transfer-node/
+docker cp internal sede_mexico:/home/sede/secure-file-transfer-node/
+docker cp go.mod   sede_mexico:/home/sede/secure-file-transfer-node/
+docker cp go.sum   sede_mexico:/home/sede/secure-file-transfer-node/
+docker exec -u root sede_mexico chown -R sede:sede /home/sede/secure-file-transfer-node
+```
+
+### 3.3 Compilar el binario
+
+Desde la raíz del proyecto, el ejecutable se deja en su carpeta `bin/`:
+
+```bash
+cd ~/secure-file-transfer-node
+go build -o bin/sftnode ./cmd/sftnode
+./bin/sftnode help
+```
+
+La sede ya está lista para recibir. Deje esta terminal abierta.
+
+---
+
+## Paso 4 · Preparar el cliente
+
+> En **Windows**, en una terminal de PowerShell, desde la raíz del proyecto.
+
+### 4.1 Compilar el cliente
+
+```powershell
+cd C:\Users\Nicolas\Documents\git\secure-file-transfer-node
+go build -o bin/sftnode.exe ./cmd/sftnode
+```
+
+### 4.2 Definir las variables de entorno
 
 ```powershell
 $env:SFT_PASSPHRASE   = "ClaveDeCifrado2026"
@@ -64,13 +141,34 @@ $env:SFT_SSH_PASSWORD = "sede123"
 
 | Variable | Protege | Valor |
 |---|---|---|
-| `SFT_PASSPHRASE` | el contenido del archivo | la elige usted |
+| `SFT_PASSPHRASE` | el contenido del archivo (AES-256) | **la misma del paso 3.1** |
 | `SFT_SSH_PASSWORD` | el canal SSH | `sede123`, definido en el Dockerfile |
 
 Son dos cosas distintas a propósito: aunque alguien intercepte el paquete o
 consiga la credencial SSH, sin la passphrase no puede leer el contenido.
 
-### 4. Enviar
+Estas variables se pierden al cerrar la ventana. Para dejarlas fijas para su
+usuario de Windows:
+
+```powershell
+[Environment]::SetEnvironmentVariable("SFT_PASSPHRASE", "ClaveDeCifrado2026", "User")
+[Environment]::SetEnvironmentVariable("SFT_SSH_PASSWORD", "sede123", "User")
+```
+
+Hay que abrir una terminal nueva para que aparezcan. Comprobar:
+
+```powershell
+$env:SFT_PASSPHRASE
+```
+
+Nunca se pasan por la línea de comandos: los argumentos de un proceso son
+visibles para cualquier usuario del sistema.
+
+---
+
+## Paso 5 · Enviar los archivos
+
+> En **Windows**, PowerShell.
 
 ```powershell
 .\bin\sftnode.exe send `
@@ -91,40 +189,102 @@ Varios archivos, repitiendo `--file` o con comodines:
   --insecure-host-key
 ```
 
+Qué significa cada parte:
+
+| Parte | Significado |
+|---|---|
+| `--url` | servidor destino: usuario, host y puerto |
+| `--file` | el archivo a enviar; se repite para varios |
+| `--dest` | carpeta remota donde dejar el paquete; debe existir |
+| `--insecure-host-key` | omite verificar la identidad del servidor, solo en pruebas |
+
 Se envían **solo los archivos indicados**. Si alguno no existe, el comando se
 detiene antes de transmitir nada.
 
-### 5. Ver qué llegó
+La salida muestra las seis etapas y termina en verde si todo fue bien:
 
-```powershell
-docker exec -u sede sede_mexico ls -lh /home/sede
+```
+· Carpeta destino /home/sede
+▶ archivo_x.txt  (1-4) Base64 + AES-256-GCM + SHA-256 + ZIP
+▶ archivo_x.txt  (5) transmitiendo por SFTP
+✔ archivo_x.txt.zip  guardado y verificado en /home/sede
+Resumen: 1 enviados · 0 alertas · 0 errores
+```
+
+---
+
+## Paso 6 · Comprobar que llegó
+
+> Vuelva a la terminal de la **sede** (la sesión SSH del paso 2).
+
+```bash
+ls -lh ~
 ```
 
 ```
--rw-r--r--  549   archivo_x.txt.zip     <- el paquete
--rwxr-xr-x  7.7M  sftnode               <- el programa que viajó con él
+-rw-r--r--  549  archivo_x.txt.zip
 ```
 
-### 6. Restaurar en la sede
+Ese `.zip` es el paquete cifrado. Todavía no se puede leer su contenido.
 
-Se usa el binario que acaba de llegar, indicando qué paquetes recuperar:
+---
 
-```powershell
-docker exec -e SFT_PASSPHRASE=ClaveDeCifrado2026 -u sede -w /home/sede sede_mexico `
-  ./sftnode receive --file /home/sede/archivo_x.txt.zip --dest /home/sede
+## Paso 7 · Restaurar en la sede
+
+> Dentro de la **sede**, en bash.
+
+Se indica qué paquetes recuperar y dónde dejar los originales:
+
+```bash
+cd ~/secure-file-transfer-node
+./bin/sftnode receive --file ~/archivo_x.txt.zip --dest ~
 ```
 
 Varios a la vez:
 
-```powershell
-docker exec -e SFT_PASSPHRASE=ClaveDeCifrado2026 -u sede -w /home/sede sede_mexico `
-  ./sftnode receive `
-    --file /home/sede/Desarrollo-23-02-2026.CiudadMexico.zip `
-    --file /home/sede/Comercial-10-11-2026.Santiago.zip `
-    --dest /home/sede
+```bash
+./bin/sftnode receive \
+  --file ~/Desarrollo-23-02-2026.CiudadMexico.zip \
+  --file ~/Comercial-10-11-2026.Santiago.zip \
+  --dest ~
 ```
 
-La `SFT_PASSPHRASE` debe ser la misma con la que se envió.
+El programa verifica el hash, descifra, decodifica y escribe el archivo
+original:
+
+```
+· 1 paquete(s) por restaurar en /home/sede
+✔ archivo_x.txt  verificado, descifrado y restaurado
+Resumen: 1 restaurados · 0 alertas · 0 errores
+```
+
+Comprobar el contenido recuperado:
+
+```bash
+cat ~/archivo_x.txt
+```
+
+Si prefiere llamar al programa desde cualquier carpeta:
+
+```bash
+echo 'export PATH=$PATH:$HOME/secure-file-transfer-node/bin' >> ~/.bashrc
+source ~/.bashrc
+sftnode help
+```
+
+---
+
+## Resumen del recorrido
+
+| Paso | Dónde | Qué se hace |
+|---|---|---|
+| 1 | Windows | levantar el contenedor de la sede |
+| 2 | Windows | entrar a la sede por SSH |
+| 3 | Sede | variable de entorno, clonar el repositorio y compilar |
+| 4 | Windows | compilar el cliente y definir las variables |
+| 5 | Windows | enviar los archivos |
+| 6 | Sede | comprobar que llegó el paquete |
+| 7 | Sede | restaurar los archivos originales |
 
 ---
 
@@ -137,8 +297,6 @@ La `SFT_PASSPHRASE` debe ser la misma con la que se envió.
 | `--url` | sí | servidor `sftp://usuario@host:puerto` |
 | `--file` | sí | archivo a enviar; se puede repetir o usar comodines |
 | `--dest` | no | carpeta remota donde guardar los paquetes |
-| `--programa` | no | binario Linux que viaja con el paquete (`bin\sftnode`) |
-| `--sin-programa` | no | no enviar el binario a la sede destino |
 | `--key-file` | no | clave privada SSH (`~/.ssh/id_ed25519`) |
 | `--known-hosts` | no | host keys conocidas (`~/.ssh/known_hosts`) |
 | `--dry-run` | no | valida nombres y parámetros sin cifrar ni conectarse |
@@ -176,16 +334,6 @@ docker exec -u sede sede_mexico mkdir -p /home/sede/incoming
 En `receive`, si `--dest` no existe se usa la carpeta temporal del sistema:
 `/tmp/sftnode-restaurados` en Linux, `%TEMP%\sftnode-restaurados` en Windows.
 
-### El programa viaja con el paquete
-
-En cada envío se copia también el binario Linux a la carpeta destino, con
-permiso de ejecución y reemplazando el de envíos anteriores. Así la sede nunca
-depende de una instalación previa ni de una versión desactualizada.
-
-Se toma de `--programa`, que por defecto es el archivo `sftnode` que esté junto
-a `sftnode.exe`. Si no se encuentra, se avisa en amarillo con el comando para
-generarlo y los archivos se envían igual. Con `--sin-programa` no se envía.
-
 ### Colores del log
 
 Verde: correcto · Amarillo: alerta recuperable · Rojo: error, se aborta ese
@@ -217,8 +365,7 @@ Bogotá (cliente)                            Sede destino (servidor)
       | Base64
       | AES-256-GCM      ──── canal SSH cifrado ────►   carpeta destino
       | SHA-256                   (SFTP)                   paquete .zip
-      | ZIP                                                + sftnode
-                                                                |
+      | ZIP                                                      |
                                                         receive: verifica
                                                         hash, descifra y
                                                         restaura el original
@@ -244,8 +391,7 @@ salvo que se use `--strict-naming`.
 | `internal/paquete/` | Base64, AES-256-GCM, SHA-256, ZIP y manifiesto |
 | `internal/envio/` | conexión SSH y transferencia SFTP |
 | `internal/logx/` | registro en consola con color |
-| `deployments/` | imagen Docker de una sede receptora |
-| `scripts/` | compilación de los dos binarios |
+| `deployments/` | imagen Docker de una sede receptora, con Go y Git |
 
 ---
 
@@ -271,7 +417,7 @@ salvo que se use `--strict-naming`.
 |---|---|
 | `falta la clave de cifrado` | no se definió `SFT_PASSPHRASE` en esta terminal |
 | `clave incorrecta o datos alterados` | la clave del `receive` no es la del `send` |
-| `No existe el binario Linux ...` | falta `bin\sftnode`; ejecute `.\scripts\build.ps1` |
+| `go: command not found` en la sede | use `bash -lc "..."`, que carga el PATH de Go |
 | `La carpeta ... no existe en el servidor` | créela antes, o deje que use la de respaldo |
 | `no se pudo conectar` | el contenedor está detenido (`docker start sede_mexico`) |
 | rutas convertidas a `C:/Program Files/Git/...` | se ejecutó en Git Bash; use PowerShell |

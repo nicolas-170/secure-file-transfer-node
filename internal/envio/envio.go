@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path"
-	"path/filepath"
 	"time"
 
 	"github.com/nicolas/sftnode/internal/config"
@@ -129,26 +128,6 @@ func (cl *Cliente) Enviar(datos []byte, nombre, carpeta string) error {
 
 	cl.sftp.Remove(destino) // por si quedó un envío anterior
 	return cl.sftp.Rename(temporal, destino)
-}
-
-// EnviarPrograma copia el binario a la carpeta destino y lo deja ejecutable,
-// reemplazando el que hubiera de un envío anterior.
-func (cl *Cliente) EnviarPrograma(ruta, carpeta string) (string, error) {
-	datos, err := os.ReadFile(ruta)
-	if err != nil {
-		return "", err
-	}
-
-	nombre := filepath.Base(ruta)
-	if err := cl.Enviar(datos, nombre, carpeta); err != nil {
-		return "", err
-	}
-
-	destino := path.Join(carpeta, nombre)
-	if err := cl.sftp.Chmod(destino, 0o755); err != nil {
-		return "", fmt.Errorf("no se pudo dar permiso de ejecución: %w", err)
-	}
-	return destino, nil
 }
 
 // Verificar relee el paquete ya guardado y comprueba que su hash coincide
